@@ -1,31 +1,41 @@
 from flask import Flask, jsonify
+from flask_cors import CORS
 from sqlalchemy import text
 
 try:
     from backend.config import Config
     from backend.database import db
-    from backend import models  # noqa: F401 - ensure models are registered with SQLAlchemy
+    from backend import models 
     from backend.seed import seed_database
+    from backend.routes.auth import auth_bp, rbac_test_bp
 except ImportError:
     from config import Config
     from database import db
-    import models  # noqa: F401 - ensure models are registered with SQLAlchemy
+    import models 
     from seed import seed_database
+    from routes.auth import auth_bp, rbac_test_bp
 
 
 def create_app(config_class=Config, seed_on_init=True):
-    """Flask application factory."""
     app = Flask(__name__)
     app.config.from_object(config_class)
 
+    CORS(
+        app,
+        resources={r"/api/*": {"origins": "*"}},
+        supports_credentials=True,
+    )
+
     db.init_app(app)
+
+    app.register_blueprint(auth_bp)
+    app.register_blueprint(rbac_test_bp)
 
     if seed_on_init:
         seed_database(app)
 
     @app.route("/health", methods=["GET"])
     def health_check():
-        """Health check endpoint that queries the SQLite database to verify connection."""
         try:
             db.session.execute(text("SELECT 1"))
             admin_exists = (

@@ -1,4 +1,3 @@
-
 # Examination Management Portal V2 (MAD-II)
 
 A full-stack Examination Management Portal built with Flask, SQLAlchemy (SQLite), and Vue.js.
@@ -18,8 +17,7 @@ frontend/            # Frontend application directory
 README.md            # Project documentation
 ```
 
-## Setup & Usage (Milestone 0 & 1)
-
+## Setup & Usage 
 1. **Install Dependencies:**
    ```bash
    pip install -r backend/requirements.txt
@@ -35,3 +33,5 @@ README.md            # Project documentation
    ```bash
    python backend/app.py
    ```
+
+
