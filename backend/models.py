@@ -118,6 +118,16 @@ class Course(db.Model):
         cascade="all, delete-orphan",
     )
 
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "code": self.code,
+            "name": self.name,
+            "description": self.description,
+            "status": self.status,
+            "examinations_count": len(self.examinations) if self.examinations else 0,
+        }
+
     def __repr__(self) -> str:
         return f"<Course {self.code}: {self.name}>"
 
@@ -151,6 +161,44 @@ class Examination(db.Model):
         cascade="all, delete-orphan",
     )
 
+    def to_dict(self, include_rubrics: bool = True) -> dict:
+        data = {
+            "id": self.id,
+            "course_id": self.course_id,
+            "course_code": self.course.code if self.course else None,
+            "course_name": self.course.name if self.course else None,
+            "name": self.name,
+            "type": self.type,
+            "slot_creation_start_date": (
+                self.slot_creation_start_date.isoformat()
+                if self.slot_creation_start_date
+                else None
+            ),
+            "slot_creation_end_date": (
+                self.slot_creation_end_date.isoformat()
+                if self.slot_creation_end_date
+                else None
+            ),
+            "slot_booking_start_date": (
+                self.slot_booking_start_date.isoformat()
+                if self.slot_booking_start_date
+                else None
+            ),
+            "slot_booking_end_date": (
+                self.slot_booking_end_date.isoformat()
+                if self.slot_booking_end_date
+                else None
+            ),
+            "status": self.status,
+            "slots_count": len(self.slots) if self.slots else 0,
+            "rubrics_count": len(self.rubrics) if self.rubrics else 0,
+        }
+        if include_rubrics and self.rubrics:
+            data["rubrics"] = [r.to_dict() for r in self.rubrics]
+        else:
+            data["rubrics"] = []
+        return data
+
     def __repr__(self) -> str:
         return f"<Examination {self.name} ({self.type})>"
 
@@ -169,6 +217,15 @@ class ExaminationRubric(db.Model):
     weightage = db.Column(db.Float, nullable=False)
 
     examination = db.relationship("Examination", back_populates="rubrics")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "examination_id": self.examination_id,
+            "criterion_name": self.criterion_name,
+            "max_marks": self.max_marks,
+            "weightage": self.weightage,
+        }
 
     def __repr__(self) -> str:
         return f"<ExaminationRubric {self.criterion_name} (max={self.max_marks})>"
@@ -208,6 +265,49 @@ class ExaminationSlot(db.Model):
         cascade="all, delete-orphan",
     )
 
+    def to_dict(self) -> dict:
+        examiner_profile = self.examiner.examiner_profile if self.examiner else None
+        return {
+            "id": self.id,
+            "examination_id": self.examination_id,
+            "examination_name": self.examination.name if self.examination else None,
+            "examination_type": self.examination.type if self.examination else None,
+            "course_code": (
+                self.examination.course.code
+                if self.examination and self.examination.course
+                else None
+            ),
+            "course_name": (
+                self.examination.course.name
+                if self.examination and self.examination.course
+                else None
+            ),
+            "examiner_id": self.examiner_id,
+            "examiner_email": self.examiner.email if self.examiner else None,
+            "examiner_name": (
+                examiner_profile.name if examiner_profile else (self.examiner.email if self.examiner else None)
+            ),
+            "examiner_department": (
+                examiner_profile.department if examiner_profile else None
+            ),
+            "date": self.date.isoformat() if self.date else None,
+            "start_time": (
+                self.start_time.strftime("%H:%M")
+                if self.start_time
+                else None
+            ),
+            "end_time": (
+                self.end_time.strftime("%H:%M")
+                if self.end_time
+                else None
+            ),
+            "max_capacity": self.max_capacity,
+            "available_seats": self.available_seats,
+            "status": self.status,
+            "meeting_link": self.meeting_link,
+            "bookings_count": len(self.bookings) if self.bookings else 0,
+        }
+
     def __repr__(self) -> str:
         return f"<ExaminationSlot id={self.id} date={self.date} {self.start_time}-{self.end_time}>"
 
@@ -243,6 +343,21 @@ class Booking(db.Model):
         uselist=False,
         cascade="all, delete-orphan",
     )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "student_id": self.student_id,
+            "student_email": self.student.email if self.student else None,
+            "slot_id": self.slot_id,
+            "booking_date": (
+                self.booking_date.isoformat() if self.booking_date else None
+            ),
+            "status": self.status,
+            "slot": self.slot.to_dict() if self.slot else None,
+            "has_evaluation": self.evaluation is not None,
+            "evaluation": self.evaluation.to_dict() if self.evaluation else None,
+        }
 
     def __repr__(self) -> str:
         return f"<Booking id={self.id} student={self.student_id} slot={self.slot_id} ({self.status})>"
@@ -283,6 +398,21 @@ class Evaluation(db.Model):
         back_populates="evaluations_received",
         foreign_keys=[student_id],
     )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "booking_id": self.booking_id,
+            "examiner_id": self.examiner_id,
+            "examiner_email": self.examiner.email if self.examiner else None,
+            "student_id": self.student_id,
+            "student_email": self.student.email if self.student else None,
+            "total_marks": self.total_marks,
+            "remarks": self.remarks,
+            "evaluation_date": (
+                self.evaluation_date.isoformat() if self.evaluation_date else None
+            ),
+        }
 
     def __repr__(self) -> str:
         return f"<Evaluation id={self.id} booking={self.booking_id} marks={self.total_marks}>"

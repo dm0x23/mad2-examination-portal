@@ -3,10 +3,10 @@ from werkzeug.security import generate_password_hash
 
 try:
     from backend.database import db
-    from backend.models import User
+    from backend.models import User, Course, ExaminerProfile
 except ImportError:
     from database import db
-    from models import User
+    from models import User, Course, ExaminerProfile
 
 ADMIN_EMAIL = "admin@portal.com"
 ADMIN_DEFAULT_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Admin@123")
@@ -38,6 +38,23 @@ def _create_tables_and_seed():
         print(f"[SEED] Created initial Admin user: {ADMIN_EMAIL}")
     else:
         print(f"[SEED] Admin user already exists ({existing_admin.email}). Skipping.")
+
+    if Course.query.count() == 0:
+        c1 = Course(
+            code="CS101",
+            name="Introduction to Programming",
+            description="Foundational Python and software problem solving.",
+            status="Active",
+        )
+        c2 = Course(
+            code="MAD202",
+            name="Modern Application Development II",
+            description="Full-stack web application development with Flask & Vue.",
+            status="Active",
+        )
+        db.session.add_all([c1, c2])
+        db.session.commit()
+        print("[SEED] Seeded initial sample courses (CS101, MAD202).")
 
 
 if __name__ == "__main__":
