@@ -9,6 +9,7 @@ try:
     from backend.seed import seed_database
     from backend.routes.auth import auth_bp, rbac_test_bp
     from backend.routes.admin import admin_bp
+    from backend.routes.examiner import examiner_bp
 except ImportError:
     from config import Config
     from database import db
@@ -16,6 +17,7 @@ except ImportError:
     from seed import seed_database
     from routes.auth import auth_bp, rbac_test_bp
     from routes.admin import admin_bp
+    from routes.examiner import examiner_bp
 
 
 def create_app(config_class=Config, seed_on_init=True):
@@ -33,6 +35,7 @@ def create_app(config_class=Config, seed_on_init=True):
     app.register_blueprint(auth_bp)
     app.register_blueprint(rbac_test_bp)
     app.register_blueprint(admin_bp)
+    app.register_blueprint(examiner_bp)
 
     if seed_on_init:
         seed_database(app)
