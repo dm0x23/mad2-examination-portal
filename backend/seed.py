@@ -39,6 +39,19 @@ def _create_tables_and_seed():
     else:
         print(f"[SEED] Admin user already exists ({existing_admin.email}). Skipping.")
 
+    # Seed initial demo student if not present
+    demo_student = User.query.filter_by(email="student@portal.com").first()
+    if not demo_student:
+        demo_student = User(
+            email="student@portal.com",
+            password_hash=generate_password_hash("Student@123"),
+            role="Student",
+            active=True,
+        )
+        db.session.add(demo_student)
+        db.session.commit()
+        print("[SEED] Created demo student user: student@portal.com (Password: Student@123)")
+
     if Course.query.count() == 0:
         c1 = Course(
             code="CS101",
