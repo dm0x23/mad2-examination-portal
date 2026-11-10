@@ -312,10 +312,18 @@
                 </td>
                 <td class="text-end">
                   <button
-                    :class="['btn btn-sm', b.has_evaluation ? 'btn-outline-secondary' : 'btn-primary fw-semibold']"
+                    v-if="b.status === 'Completed' || b.has_evaluation"
+                    class="btn btn-sm btn-outline-success fw-semibold"
+                    @click="openReviewScorecardModal(b)"
+                  >
+                    View Scorecard &rarr;
+                  </button>
+                  <button
+                    v-else
+                    class="btn btn-sm btn-primary fw-semibold"
                     @click="openEvaluationModal(b)"
                   >
-                    {{ b.has_evaluation ? 'Edit Score' : 'Evaluate' }}
+                    Grade Candidate &rarr;
                   </button>
                 </td>
               </tr>
@@ -731,6 +739,103 @@
         </div>
       </div>
     </div>
+
+    <!-- ================================================================= -->
+    <!-- MODAL 4: Read-Only Review Graded Scorecard Modal (Milestone 6)     -->
+    <!-- ================================================================= -->
+    <div
+      v-if="showReviewModal"
+      class="modal fade show d-block"
+      tabindex="-1"
+      style="background: rgba(0, 0, 0, 0.55);"
+    >
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content border-0 shadow">
+          <div class="modal-header bg-dark text-white">
+            <h5 class="modal-title">
+              Candidate Evaluation Scorecard &amp; Rubric Feedback (Read-Only)
+            </h5>
+            <button type="button" class="btn-close btn-close-white" @click="showReviewModal = false"></button>
+          </div>
+          <div class="modal-body">
+            <div class="p-3 bg-light border rounded mb-3">
+              <div class="row g-2 align-items-center">
+                <div class="col-sm-8">
+                  <h5 class="fw-bold text-dark mb-1">
+                    {{ selectedReviewBooking?.student_name }}
+                  </h5>
+                  <div class="text-muted small">
+                    Candidate Email: <strong>{{ selectedReviewBooking?.student_email }}</strong> &bull;
+                    Student ID: #{{ selectedReviewBooking?.student_id }}
+                  </div>
+                  <div class="small mt-1 text-muted">
+                    Exam: <strong>{{ selectedReviewBooking?.examination_name }}</strong> ({{ selectedReviewBooking?.course_code }})
+                  </div>
+                </div>
+                <div class="col-sm-4 text-sm-end">
+                  <div class="text-muted small">Final Total Marks</div>
+                  <h2 class="fw-bold text-success mb-0">
+                    {{ selectedReviewBooking?.evaluation?.total_marks }}
+                    <small class="fs-6 text-muted" v-if="reviewRubricsTotalMaxMarks > 0">/ {{ reviewRubricsTotalMaxMarks }}</small>
+                  </h2>
+                  <small class="text-muted">
+                    Evaluated on: {{ formatDate(selectedReviewBooking?.evaluation?.evaluation_date) }}
+                  </small>
+                </div>
+              </div>
+            </div>
+
+            <!-- Rubric Breakdown -->
+            <div class="mb-4">
+              <h6 class="fw-bold text-secondary mb-2">Evaluated Rubric Criteria Breakdown</h6>
+              <div v-if="reviewRubricBreakdownItems.length > 0" class="table-responsive">
+                <table class="table table-bordered table-sm align-middle mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Criterion</th>
+                      <th style="width: 120px;" class="text-center">Max Marks</th>
+                      <th style="width: 120px;" class="text-center">Weightage</th>
+                      <th style="width: 130px;" class="text-center">Score Awarded</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(item, idx) in reviewRubricBreakdownItems" :key="idx">
+                      <td class="fw-semibold">{{ item.criterion_name }}</td>
+                      <td class="text-center">{{ item.max_marks }}</td>
+                      <td class="text-center">{{ item.weightage ? item.weightage + '%' : '-' }}</td>
+                      <td class="text-center fw-bold text-success">
+                        {{ item.marks !== undefined ? item.marks : '-' }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div v-else class="p-3 border rounded text-muted small bg-white text-center">
+                Graded directly as overall score.
+              </div>
+            </div>
+
+            <!-- Remarks -->
+            <div class="card bg-light border-0">
+              <div class="card-body p-3">
+                <h6 class="fw-bold text-dark mb-1">Your Submitted Feedback Remarks:</h6>
+                <p class="mb-0 text-secondary fst-italic" v-if="selectedReviewBooking?.evaluation?.remarks">
+                  &ldquo;{{ selectedReviewBooking?.evaluation?.remarks }}&rdquo;
+                </p>
+                <p class="mb-0 text-muted small" v-else>
+                  No written feedback comments recorded.
+                </p>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer bg-light">
+            <button type="button" class="btn btn-secondary btn-sm" @click="showReviewModal = false">
+              Close Review
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -833,6 +938,49 @@ const evaluationForm = ref({
   marks_obtained: null,
   remarks: "",
 });
+
+// Review Scorecard Modal (Milestone 6)
+const showReviewModal = ref(false);
+const selectedReviewBooking = ref(null);
+
+const reviewRubricBreakdownItems = computed(() => {
+  if (!selectedReviewBooking.value) return [];
+  const evalRec = selectedReviewBooking.value.evaluation;
+  if (!evalRec) return [];
+
+  const rawBreakdown = evalRec.rubric_breakdown;
+  if (Array.isArray(rawBreakdown) && rawBreakdown.length > 0) {
+    return rawBreakdown;
+  }
+
+  const examRubrics = selectedReviewBooking.value.rubrics || [];
+  if (examRubrics.length > 0) {
+    return examRubrics.map((r) => ({
+      criterion_name: r.criterion_name,
+      max_marks: r.max_marks,
+      weightage: r.weightage,
+      marks:
+        rawBreakdown && typeof rawBreakdown === "object"
+          ? rawBreakdown[r.id]
+          : undefined,
+    }));
+  }
+
+  return [];
+});
+
+const reviewRubricsTotalMaxMarks = computed(() => {
+  if (reviewRubricBreakdownItems.value.length > 0) {
+    return reviewRubricBreakdownItems.value.reduce((acc, i) => acc + (i.max_marks || 0), 0);
+  }
+  const examRubrics = selectedReviewBooking.value?.rubrics || [];
+  return examRubrics.reduce((acc, r) => acc + (r.max_marks || 0), 0);
+});
+
+function openReviewScorecardModal(booking) {
+  selectedReviewBooking.value = booking;
+  showReviewModal.value = true;
+}
 
 const rubricsTotalAllowedMarks = computed(() => {
   if (!selectedBooking.value?.rubrics || selectedBooking.value.rubrics.length === 0) return 0;
@@ -1008,10 +1156,19 @@ async function handleSaveEvaluation() {
   if (!selectedBooking.value) return;
   formSubmitting.value = true;
   try {
+    const breakdown = (selectedBooking.value.rubrics || []).map((r) => ({
+      rubric_id: r.id,
+      criterion_name: r.criterion_name,
+      max_marks: r.max_marks,
+      weightage: r.weightage,
+      marks: Number(rubricScores.value[r.id] !== undefined ? rubricScores.value[r.id] : 0),
+    }));
+
     const payload = {
       booking_id: selectedBooking.value.booking_id,
       marks_obtained: Number(evaluationForm.value.marks_obtained),
       remarks: evaluationForm.value.remarks,
+      rubric_breakdown: breakdown.length > 0 ? breakdown : undefined,
     };
     const res = await apiClient.post("/api/examiner/evaluations", payload);
 

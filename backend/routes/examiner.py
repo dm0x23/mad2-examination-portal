@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, date, time, timezone
 from flask import Blueprint, g, jsonify, request
 
@@ -540,7 +541,7 @@ def list_booked_students(slot_id=None):
 
 
 # ---------------------------------------------------------------------------
-# 6. Student Evaluation & Grading
+# 6. Student Evaluation & Grading (Milestone 6 Lifecycle & Rubric Tracking)
 # ---------------------------------------------------------------------------
 
 
@@ -549,17 +550,23 @@ def list_booked_students(slot_id=None):
 def evaluate_student():
     """
     POST /api/examiner/evaluations
-    Accepts: booking_id, marks_obtained (or marks), remarks.
-    Verify that the slot belongs to this examiner.
-    Fetch the predefined rubrics for the examination to ensure marks do not exceed max_marks.
-    Create/Update the Evaluation record, update the booking status to 'Completed',
-    and record the evaluation date.
+    Accepts: booking_id, marks_obtained (or rubric_breakdown), remarks.
+    Lifecycle rules:
+    - Ensure an evaluation record (Evaluation model) can ONLY be submitted for bookings
+      that have the status 'Booked'.
+    - When an examiner grades a student, record criterion-level breakdown matching the
+      ExaminationRubric (marks per criterion, total marks, and written remarks).
+    - Store the evaluation timestamp.
+    - Upon successful evaluation submission:
+      * The booking status transitions to 'Completed'.
+      * The slot status transitions to 'Completed' once all booked students in that slot are evaluated.
     """
     data = request.get_json(silent=True) or {}
     booking_id = data.get("booking_id")
     raw_marks = data.get("marks_obtained")
     if raw_marks is None:
         raw_marks = data.get("marks")
+    raw_breakdown = data.get("rubric_breakdown")
     remarks = (data.get("remarks") or "").strip()
 
     if not booking_id:
@@ -585,19 +592,117 @@ def evaluate_student():
             403,
         )
 
-    # Validate marks
-    try:
-        marks_obtained = float(raw_marks)
-    except (ValueError, TypeError):
+    # Lifecycle State Rule: Can only evaluate bookings with status 'Booked'
+    if booking.status != "Booked":
         return (
             jsonify(
                 {
                     "error": "Bad Request",
-                    "message": "marks_obtained must be a valid positive number.",
+                    "message": (
+                        f"Evaluations can only be submitted for bookings with status 'Booked'. "
+                        f"Current booking status is '{booking.status}'."
+                    ),
                 }
             ),
             400,
         )
+
+    exam = booking.slot.examination
+    defined_rubrics = {r.id: r for r in exam.rubrics} if exam and exam.rubrics else {}
+    processed_breakdown = []
+
+    # Process rubric breakdown if provided
+    if raw_breakdown:
+        calculated_total = 0.0
+        if isinstance(raw_breakdown, dict):
+            # Format: { "rubric_id": marks }
+            for r_id_str, score in raw_breakdown.items():
+                try:
+                    r_id = int(r_id_str)
+                    s_val = float(score)
+                except (ValueError, TypeError):
+                    continue
+                rubric = defined_rubrics.get(r_id)
+                criterion_title = rubric.criterion_name if rubric else f"Criterion #{r_id}"
+                max_m = rubric.max_marks if rubric else s_val
+                if s_val < 0 or (rubric and s_val > rubric.max_marks):
+                    return (
+                        jsonify(
+                            {
+                                "error": "Bad Request",
+                                "message": (
+                                    f"Score for '{criterion_title}' must be between 0 and {max_m}."
+                                ),
+                            }
+                        ),
+                        400,
+                    )
+                calculated_total += s_val
+                processed_breakdown.append(
+                    {
+                        "rubric_id": r_id,
+                        "criterion_name": criterion_title,
+                        "marks": s_val,
+                        "max_marks": max_m,
+                        "weightage": rubric.weightage if rubric else 0,
+                    }
+                )
+        elif isinstance(raw_breakdown, list):
+            # Format: [ { "rubric_id": 1, "criterion_name": "...", "marks": 20 }, ... ]
+            for item in raw_breakdown:
+                r_id = item.get("rubric_id") or item.get("id")
+                rubric = defined_rubrics.get(r_id) if r_id else None
+                s_val = float(item.get("marks", 0))
+                max_m = rubric.max_marks if rubric else float(item.get("max_marks", s_val))
+                criterion_title = (
+                    rubric.criterion_name
+                    if rubric
+                    else item.get("criterion_name", f"Criterion #{r_id}")
+                )
+                if s_val < 0 or (rubric and s_val > rubric.max_marks):
+                    return (
+                        jsonify(
+                            {
+                                "error": "Bad Request",
+                                "message": (
+                                    f"Score for '{criterion_title}' must be between 0 and {max_m}."
+                                ),
+                            }
+                        ),
+                        400,
+                    )
+                calculated_total += s_val
+                processed_breakdown.append(
+                    {
+                        "rubric_id": r_id,
+                        "criterion_name": criterion_title,
+                        "marks": s_val,
+                        "max_marks": max_m,
+                        "weightage": rubric.weightage if rubric else item.get("weightage", 0),
+                    }
+                )
+
+        if raw_marks is None:
+            marks_obtained = calculated_total
+        else:
+            try:
+                marks_obtained = float(raw_marks)
+            except (ValueError, TypeError):
+                marks_obtained = calculated_total
+    else:
+        # No breakdown provided, parse total marks directly
+        try:
+            marks_obtained = float(raw_marks)
+        except (ValueError, TypeError):
+            return (
+                jsonify(
+                    {
+                        "error": "Bad Request",
+                        "message": "marks_obtained must be a valid positive number.",
+                    }
+                ),
+                400,
+            )
 
     if marks_obtained < 0:
         return (
@@ -606,9 +711,8 @@ def evaluate_student():
         )
 
     # Predefined rubrics check
-    exam = booking.slot.examination
-    if exam and exam.rubrics and len(exam.rubrics) > 0:
-        max_total_marks = sum(r.max_marks for r in exam.rubrics)
+    if defined_rubrics:
+        max_total_marks = sum(r.max_marks for r in defined_rubrics.values())
         if marks_obtained > max_total_marks:
             return (
                 jsonify(
@@ -624,11 +728,14 @@ def evaluate_student():
                 400,
             )
 
-    # Create or update evaluation
+    serialized_breakdown = json.dumps(processed_breakdown) if processed_breakdown else None
+
+    # Create or update evaluation record
     evaluation = Evaluation.query.filter_by(booking_id=booking.id).first()
     if evaluation:
         evaluation.total_marks = marks_obtained
         evaluation.remarks = remarks
+        evaluation.rubric_breakdown = serialized_breakdown
         evaluation.evaluation_date = utc_now()
     else:
         evaluation = Evaluation(
@@ -637,12 +744,22 @@ def evaluate_student():
             student_id=booking.student_id,
             total_marks=marks_obtained,
             remarks=remarks,
+            rubric_breakdown=serialized_breakdown,
             evaluation_date=utc_now(),
         )
         db.session.add(evaluation)
 
-    # Mark booking completed
+    # State Transition 1: Booking status transitions to 'Completed'
     booking.status = "Completed"
+
+    # State Transition 2: Slot status transitions to 'Completed' once all booked students are evaluated
+    slot = booking.slot
+    if slot:
+        slot_bookings = Booking.query.filter_by(slot_id=slot.id).all()
+        # If all bookings in this slot are completed (or evaluated)
+        if slot_bookings and all(b.status == "Completed" for b in slot_bookings):
+            slot.status = "Completed"
+
     db.session.commit()
 
     return (
@@ -651,7 +768,105 @@ def evaluate_student():
                 "message": "Student evaluation recorded successfully.",
                 "booking_id": booking.id,
                 "status": booking.status,
+                "slot_status": slot.status if slot else None,
                 "evaluation": evaluation.to_dict(),
+            }
+        ),
+        200,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 7. Examiner Evaluation & Booking History (Milestone 6 Data Isolation)
+# ---------------------------------------------------------------------------
+
+
+@examiner_bp.route("/history", methods=["GET"])
+@role_required("Examiner")
+def get_examiner_history():
+    """
+    GET /api/examiner/history
+    Examiner can query their historical slots and evaluations, viewing only
+    students booked into their assigned examination slots.
+    Supports query params: status ('Booked', 'Completed', 'Cancelled', 'all'), examination_id.
+    """
+    examiner_id = g.current_user.id
+    status_filter = request.args.get("status")
+    exam_filter = request.args.get("examination_id")
+
+    # Fetch examiner slots
+    slot_query = ExaminationSlot.query.filter_by(examiner_id=examiner_id)
+    if exam_filter:
+        slot_query = slot_query.filter_by(examination_id=int(exam_filter))
+    slots = slot_query.order_by(ExaminationSlot.date.desc(), ExaminationSlot.start_time.asc()).all()
+
+    slot_ids = [s.id for s in slots]
+    if slot_ids:
+        booking_query = Booking.query.filter(Booking.slot_id.in_(slot_ids))
+        if status_filter and status_filter.lower() != "all":
+            booking_query = booking_query.filter(Booking.status.ilike(status_filter.strip()))
+        bookings = booking_query.order_by(Booking.booking_date.desc()).all()
+    else:
+        bookings = []
+
+    formatted_bookings = []
+    for b in bookings:
+        student = b.student
+        slot = b.slot
+        exam = slot.examination if slot else None
+        course = exam.course if exam else None
+        evaluation = b.evaluation
+
+        student_name = (
+            student.email.split("@")[0].replace(".", " ").title()
+            if student and student.email
+            else "Student"
+        )
+
+        formatted_bookings.append(
+            {
+                "booking_id": b.id,
+                "booking_date": b.booking_date.isoformat() if b.booking_date else None,
+                "status": b.status,
+                "student_id": b.student_id,
+                "student_email": student.email if student else None,
+                "student_name": student_name,
+                "slot_id": b.slot_id,
+                "slot_date": slot.date.isoformat() if slot and slot.date else None,
+                "slot_start_time": (
+                    slot.start_time.strftime("%H:%M") if slot and slot.start_time else None
+                ),
+                "slot_end_time": (
+                    slot.end_time.strftime("%H:%M") if slot and slot.end_time else None
+                ),
+                "slot_status": slot.status if slot else None,
+                "meeting_link": slot.meeting_link if slot else None,
+                "examination_id": exam.id if exam else None,
+                "examination_name": exam.name if exam else None,
+                "examination_type": exam.type if exam else None,
+                "course_code": course.code if course else None,
+                "course_name": course.name if course else None,
+                "rubrics": [r.to_dict() for r in exam.rubrics] if exam and exam.rubrics else [],
+                "has_evaluation": evaluation is not None,
+                "evaluation": evaluation.to_dict() if evaluation else None,
+            }
+        )
+
+    total_evaluated = sum(1 for b in formatted_bookings if b["status"] == "Completed")
+    pending_evaluations = sum(1 for b in formatted_bookings if b["status"] == "Booked")
+
+    return (
+        jsonify(
+            {
+                "examiner": g.current_user.to_dict(),
+                "metrics": {
+                    "total_slots": len(slots),
+                    "total_students": len(formatted_bookings),
+                    "completed_evaluations": total_evaluated,
+                    "pending_evaluations": pending_evaluations,
+                },
+                "slots": [s.to_dict() for s in slots],
+                "bookings": formatted_bookings,
             }
         ),
         200,

@@ -693,34 +693,109 @@
             </table>
           </div>
 
-          <h6 class="fw-bold text-secondary mb-3">All Student Bookings Log ({{ historyRecords.bookings?.length || 0 }})</h6>
+          <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+            <div>
+              <h6 class="fw-bold text-secondary mb-0">Platform Bookings Supervision &amp; Audit Log</h6>
+              <small class="text-muted">Search and supervise student reservations across all platform exams</small>
+            </div>
+            <div class="d-flex gap-2">
+              <input
+                v-model.trim="historyFilterQuery"
+                type="text"
+                class="form-control form-control-sm"
+                placeholder="Filter by student, exam, examiner..."
+                style="width: 240px;"
+              />
+              <select v-model="historyFilterStatus" class="form-select form-select-sm" style="width: 140px;">
+                <option value="all">All Statuses</option>
+                <option value="Booked">Booked</option>
+                <option value="Completed">Completed</option>
+                <option value="Cancelled">Cancelled</option>
+              </select>
+            </div>
+          </div>
+
           <div class="table-responsive">
-            <table class="table table-sm table-bordered align-middle">
+            <table class="table table-sm table-hover align-middle mb-0">
               <thead class="table-light">
                 <tr>
-                  <th>Booking ID</th>
-                  <th>Student Email</th>
+                  <th style="width: 70px;">ID</th>
+                  <th>Student Candidate</th>
                   <th>Exam &amp; Course</th>
+                  <th>Assigned Examiner</th>
                   <th>Date &amp; Time</th>
-                  <th>Booking Status</th>
+                  <th style="width: 110px;">Status</th>
                   <th>Evaluation / Marks</th>
+                  <th style="width: 180px;" class="text-end">Intervention</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="!historyRecords.bookings?.length">
-                  <td colspan="6" class="text-center text-muted py-3">No booking history logged.</td>
+                <tr v-if="filteredHistoryBookings.length === 0">
+                  <td colspan="8" class="text-center text-muted py-3">No matching booking history records found.</td>
                 </tr>
-                <tr v-for="hb in historyRecords.bookings" :key="hb.id">
-                  <td>#{{ hb.id }}</td>
-                  <td>{{ hb.student_email }}</td>
-                  <td>{{ hb.slot?.examination_name }} ({{ hb.slot?.course_code }})</td>
-                  <td>{{ hb.slot?.date }} {{ hb.slot?.start_time }}</td>
-                  <td><span class="badge bg-dark">{{ hb.status }}</span></td>
+                <tr v-for="hb in filteredHistoryBookings" :key="hb.id">
+                  <td class="text-muted fw-semibold">#{{ hb.id }}</td>
                   <td>
-                    <span v-if="hb.has_evaluation" class="badge bg-success">
+                    <div class="fw-semibold">{{ hb.student_email }}</div>
+                    <small class="text-muted">Student #{{ hb.student_id }}</small>
+                  </td>
+                  <td>
+                    <strong>{{ hb.slot?.examination_name || 'N/A' }}</strong>
+                    <div class="small text-primary">{{ hb.slot?.course_code }}</div>
+                  </td>
+                  <td>
+                    <div class="small fw-semibold">{{ hb.slot?.examiner_name || hb.slot?.examiner_email }}</div>
+                    <small class="text-muted">{{ hb.slot?.examiner_department || '-' }}</small>
+                  </td>
+                  <td>
+                    <div>{{ hb.slot?.date }}</div>
+                    <small class="text-muted">{{ hb.slot?.start_time }} &ndash; {{ hb.slot?.end_time }}</small>
+                  </td>
+                  <td>
+                    <span
+                      :class="[
+                        'badge',
+                        hb.status === 'Completed' ? 'bg-success' : '',
+                        hb.status === 'Booked' ? 'bg-primary' : '',
+                        hb.status === 'Cancelled' ? 'bg-secondary' : '',
+                      ]"
+                    >
+                      {{ hb.status }}
+                    </span>
+                  </td>
+                  <td>
+                    <span v-if="hb.has_evaluation" class="badge bg-success fs-6">
                       {{ hb.evaluation?.total_marks }} marks
                     </span>
                     <span v-else class="text-muted small">Not evaluated</span>
+                  </td>
+                  <td class="text-end">
+                    <div v-if="hb.status === 'Booked'" class="btn-group btn-group-sm">
+                      <button
+                        class="btn btn-outline-primary"
+                        title="Reschedule student to another slot"
+                        @click="openRescheduleModal(hb)"
+                      >
+                        Reschedule
+                      </button>
+                      <button
+                        v-if="hb.slot"
+                        class="btn btn-outline-warning text-dark"
+                        title="Reassign slot to another examiner"
+                        @click="openReassignModal(hb.slot)"
+                      >
+                        Swap Staff
+                      </button>
+                    </div>
+                    <div v-else-if="hb.has_evaluation || hb.status === 'Completed'">
+                      <button
+                        class="btn btn-outline-success btn-sm py-0 px-2 small"
+                        @click="openAdminScorecardModal(hb)"
+                      >
+                        View Scorecard
+                      </button>
+                    </div>
+                    <span v-else class="text-muted small">&ndash;</span>
                   </td>
                 </tr>
               </tbody>
@@ -1197,6 +1272,104 @@
         </div>
       </div>
     </div>
+
+    <!-- Modal 7: Admin View Student Scorecard & Rubrics (Milestone 6) -->
+    <div
+      v-if="showAdminScorecardModal"
+      class="modal fade show d-block"
+      tabindex="-1"
+      style="background: rgba(0, 0, 0, 0.55);"
+    >
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content border-0 shadow">
+          <div class="modal-header bg-success text-white">
+            <h5 class="modal-title">
+              Audit Examination Scorecard &amp; Rubric Feedback
+            </h5>
+            <button type="button" class="btn-close btn-close-white" @click="showAdminScorecardModal = false"></button>
+          </div>
+          <div class="modal-body">
+            <div class="p-3 bg-light border rounded mb-3">
+              <div class="row g-2 align-items-center">
+                <div class="col-sm-8">
+                  <h5 class="fw-bold text-dark mb-1">
+                    {{ selectedAdminScorecardBooking?.slot?.examination_name }}
+                  </h5>
+                  <div class="text-muted small">
+                    Course: <span class="badge bg-primary me-1">{{ selectedAdminScorecardBooking?.slot?.course_code }}</span>
+                    <span>{{ selectedAdminScorecardBooking?.slot?.course_name }}</span>
+                  </div>
+                  <div class="small mt-1 text-muted">
+                    Student Candidate: <strong>{{ selectedAdminScorecardBooking?.student_email }}</strong> (ID #{{ selectedAdminScorecardBooking?.student_id }})
+                  </div>
+                  <div class="small text-muted">
+                    Assigned Examiner: <strong>{{ selectedAdminScorecardBooking?.slot?.examiner_name || selectedAdminScorecardBooking?.slot?.examiner_email }}</strong>
+                    <span v-if="selectedAdminScorecardBooking?.slot?.examiner_department">({{ selectedAdminScorecardBooking?.slot?.examiner_department }})</span>
+                  </div>
+                </div>
+                <div class="col-sm-4 text-sm-end">
+                  <div class="text-muted small">Marks Scored</div>
+                  <h2 class="fw-bold text-success mb-0">
+                    {{ selectedAdminScorecardBooking?.evaluation?.total_marks }}
+                  </h2>
+                  <small class="text-muted">
+                    Date: {{ formatDate(selectedAdminScorecardBooking?.evaluation?.evaluation_date) }}
+                  </small>
+                </div>
+              </div>
+            </div>
+
+            <!-- Rubric Breakdown -->
+            <div class="mb-4">
+              <h6 class="fw-bold text-secondary mb-2">Rubric Criteria Breakdown</h6>
+              <div v-if="adminScorecardRubricItems.length > 0" class="table-responsive">
+                <table class="table table-bordered table-sm align-middle mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Criterion</th>
+                      <th style="width: 120px;" class="text-center">Max Marks</th>
+                      <th style="width: 120px;" class="text-center">Weightage</th>
+                      <th style="width: 130px;" class="text-center">Score Awarded</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(item, idx) in adminScorecardRubricItems" :key="idx">
+                      <td class="fw-semibold">{{ item.criterion_name }}</td>
+                      <td class="text-center">{{ item.max_marks }}</td>
+                      <td class="text-center">{{ item.weightage ? item.weightage + '%' : '-' }}</td>
+                      <td class="text-center fw-bold text-success">
+                        {{ item.marks !== undefined ? item.marks : '-' }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div v-else class="p-3 border rounded text-muted small bg-white text-center">
+                Score evaluated directly without granular rubric criteria breakdown.
+              </div>
+            </div>
+
+            <!-- Remarks -->
+            <div class="card bg-light border-0">
+              <div class="card-body p-3">
+                <h6 class="fw-bold text-dark mb-1">Examiner Written Feedback:</h6>
+                <p class="mb-0 text-secondary fst-italic" v-if="selectedAdminScorecardBooking?.evaluation?.remarks">
+                  &ldquo;{{ selectedAdminScorecardBooking?.evaluation?.remarks }}&rdquo;
+                </p>
+                <p class="mb-0 text-muted small" v-else>
+                  No written feedback comments recorded.
+                </p>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer bg-light">
+            <button type="button" class="btn btn-secondary btn-sm" @click="showAdminScorecardModal = false">
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -1302,6 +1475,49 @@ const targetExaminerId = ref("");
 const showRescheduleModal = ref(false);
 const selectedBooking = ref(null);
 const targetSlotId = ref("");
+
+// History Filtering & Scorecard Modal (Milestone 6)
+const historyFilterQuery = ref("");
+const historyFilterStatus = ref("all");
+const showAdminScorecardModal = ref(false);
+const selectedAdminScorecardBooking = ref(null);
+
+const filteredHistoryBookings = computed(() => {
+  const allList = historyRecords.value?.bookings || [];
+  return allList.filter((b) => {
+    if (historyFilterStatus.value !== "all" && b.status !== historyFilterStatus.value) {
+      return false;
+    }
+    if (historyFilterQuery.value) {
+      const q = historyFilterQuery.value.toLowerCase();
+      const studentMatch = b.student_email?.toLowerCase().includes(q);
+      const examMatch = b.slot?.examination_name?.toLowerCase().includes(q) || b.slot?.course_code?.toLowerCase().includes(q);
+      const examinerMatch = b.slot?.examiner_name?.toLowerCase().includes(q) || b.slot?.examiner_email?.toLowerCase().includes(q);
+      const idMatch = String(b.id).includes(q);
+      if (!studentMatch && !examMatch && !examinerMatch && !idMatch) {
+        return false;
+      }
+    }
+    return true;
+  });
+});
+
+const adminScorecardRubricItems = computed(() => {
+  if (!selectedAdminScorecardBooking.value) return [];
+  const evalRec = selectedAdminScorecardBooking.value.evaluation;
+  if (!evalRec) return [];
+
+  const rawBreakdown = evalRec.rubric_breakdown;
+  if (Array.isArray(rawBreakdown) && rawBreakdown.length > 0) {
+    return rawBreakdown;
+  }
+  return [];
+});
+
+function openAdminScorecardModal(booking) {
+  selectedAdminScorecardBooking.value = booking;
+  showAdminScorecardModal.value = true;
+}
 
 const availableAlternativeSlots = computed(() => {
   if (!selectedBooking.value || !selectedBooking.value.slot) return [];

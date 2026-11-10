@@ -96,6 +96,7 @@ def format_booking_payload(booking: Booking) -> dict:
             "code": course.code if course else "N/A",
             "name": course.name if course else "N/A",
         } if course else None,
+        "rubrics": [r.to_dict() for r in exam.rubrics] if exam and exam.rubrics else [],
         "evaluation": booking.evaluation.to_dict() if booking.evaluation else None,
         "has_evaluation": booking.evaluation is not None,
     }
@@ -520,4 +521,47 @@ def search_examinations():
         )
 
     return jsonify({"query": search_text, "examinations": results, "total": len(results)}), 200
+
+
+# ---------------------------------------------------------------------------
+# 6. Student Examination Booking History & Results (Milestone 6)
+# ---------------------------------------------------------------------------
+
+
+@student_bp.route("/history", methods=["GET"])
+@role_required("Student")
+def get_student_history():
+    """
+    GET /api/student/history
+    Student can view only their own booking records, examination attempts,
+    published marks, and rubric feedback.
+    """
+    student_id = g.current_user.id
+    bookings = (
+        Booking.query.filter_by(student_id=student_id)
+        .order_by(Booking.booking_date.desc())
+        .all()
+    )
+
+    formatted = [format_booking_payload(b) for b in bookings]
+    completed = [b for b in formatted if b["status"] == "Completed" or b["has_evaluation"]]
+    cancelled = [b for b in formatted if b["status"] == "Cancelled"]
+    upcoming = [b for b in formatted if b["status"] == "Booked"]
+
+    return (
+        jsonify(
+            {
+                "student": g.current_user.to_dict(),
+                "metrics": {
+                    "total_bookings": len(formatted),
+                    "completed": len(completed),
+                    "cancelled": len(cancelled),
+                    "upcoming": len(upcoming),
+                },
+                "bookings": formatted,
+                "completed_evaluations": completed,
+            }
+        ),
+        200,
+    )
 

@@ -347,6 +347,7 @@
                   <th style="width: 140px;">Marks Scored</th>
                   <th>Feedback &amp; Remarks</th>
                   <th style="width: 140px;">Evaluation Date</th>
+                  <th style="width: 150px;" class="text-end">Scorecard</th>
                 </tr>
               </thead>
               <tbody>
@@ -370,13 +371,18 @@
                     </span>
                   </td>
                   <td>
-                    <div v-if="res.evaluation?.remarks" class="small text-secondary">
+                    <div v-if="res.evaluation?.remarks" class="small text-secondary text-truncate" style="max-width: 200px;">
                       &ldquo;{{ res.evaluation.remarks }}&rdquo;
                     </div>
                     <span v-else class="text-muted small">No written remarks</span>
                   </td>
                   <td class="small text-muted">
                     {{ formatDate(res.evaluation?.evaluation_date) }}
+                  </td>
+                  <td class="text-end">
+                    <button class="btn btn-sm btn-outline-success fw-semibold" @click="openScorecardModal(res)">
+                      View Scorecard &rarr;
+                    </button>
                   </td>
                 </tr>
               </tbody>
@@ -399,12 +405,13 @@
                 <th>Examination</th>
                 <th>Slot Date &amp; Time</th>
                 <th>Reserved On</th>
-                <th style="width: 120px;">Final Status</th>
+                <th style="width: 120px;">Status</th>
+                <th style="width: 140px;" class="text-end">Details</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="bookingHistory.length === 0">
-                <td colspan="5" class="text-center text-muted py-3">No booking history logged.</td>
+                <td colspan="6" class="text-center text-muted py-3">No booking history logged.</td>
               </tr>
               <tr v-for="bh in bookingHistory" :key="bh.booking_id">
                 <td class="text-muted fw-semibold">#{{ bh.booking_id }}</td>
@@ -418,12 +425,22 @@
                     :class="[
                       'badge',
                       bh.status === 'Completed' ? 'bg-success' : '',
-                      bh.status === 'Booked' ? 'bg-warning text-dark' : '',
-                      bh.status === 'Cancelled' ? 'bg-danger' : '',
+                      bh.status === 'Booked' ? 'bg-primary' : '',
+                      bh.status === 'Cancelled' ? 'bg-secondary' : '',
                     ]"
                   >
                     {{ bh.status }}
                   </span>
+                </td>
+                <td class="text-end">
+                  <button
+                    v-if="bh.has_evaluation || bh.status === 'Completed'"
+                    class="btn btn-sm btn-outline-success py-0 px-2 small"
+                    @click="openScorecardModal(bh)"
+                  >
+                    Scorecard
+                  </button>
+                  <span v-else class="text-muted small">&ndash;</span>
                 </td>
               </tr>
             </tbody>
@@ -524,6 +541,108 @@
         </div>
       </div>
     </div>
+
+    <!-- ================================================================= -->
+    <!-- MODAL: View Scorecard & Rubric Feedback (Milestone 6)             -->
+    <!-- ================================================================= -->
+    <div
+      v-if="showScorecardModal"
+      class="modal fade show d-block"
+      tabindex="-1"
+      style="background: rgba(0, 0, 0, 0.55);"
+    >
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content border-0 shadow">
+          <div class="modal-header bg-success text-white">
+            <h5 class="modal-title">
+              Examination Scorecard &amp; Rubric Feedback
+            </h5>
+            <button type="button" class="btn-close btn-close-white" @click="showScorecardModal = false"></button>
+          </div>
+          <div class="modal-body">
+            <!-- Exam & Student Header -->
+            <div class="p-3 bg-light border rounded mb-3">
+              <div class="row g-2 align-items-center">
+                <div class="col-sm-8">
+                  <h5 class="fw-bold text-dark mb-1">
+                    {{ selectedScorecardBooking?.examination?.name }}
+                  </h5>
+                  <div class="text-muted small">
+                    <span class="badge bg-primary me-1">{{ selectedScorecardBooking?.course?.code }}</span>
+                    <span>{{ selectedScorecardBooking?.course?.name }}</span> &bull;
+                    <span class="text-secondary fw-semibold">{{ selectedScorecardBooking?.examination?.type }}</span>
+                  </div>
+                  <div class="small mt-1 text-muted">
+                    Evaluated by: <strong>{{ selectedScorecardBooking?.examiner?.name }}</strong> ({{ selectedScorecardBooking?.examiner?.department }})
+                  </div>
+                </div>
+                <div class="col-sm-4 text-sm-end">
+                  <div class="text-muted small">Final Total Score</div>
+                  <h2 class="fw-bold text-success mb-0">
+                    {{ selectedScorecardBooking?.evaluation?.total_marks }}
+                    <small class="fs-6 text-muted" v-if="rubricTotalMaxMarks > 0">/ {{ rubricTotalMaxMarks }}</small>
+                  </h2>
+                  <small class="text-muted">
+                    Date: {{ formatDate(selectedScorecardBooking?.evaluation?.evaluation_date) }}
+                  </small>
+                </div>
+              </div>
+            </div>
+
+            <!-- Rubric Breakdown Table -->
+            <div class="mb-4">
+              <h6 class="fw-bold text-secondary mb-2">Evaluation Criteria &amp; Rubric Breakdown</h6>
+              <div
+                v-if="scorecardRubricItems.length > 0"
+                class="table-responsive"
+              >
+                <table class="table table-bordered table-sm align-middle mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Criterion</th>
+                      <th style="width: 120px;" class="text-center">Max Marks</th>
+                      <th style="width: 120px;" class="text-center">Weightage</th>
+                      <th style="width: 130px;" class="text-center">Marks Awarded</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(item, idx) in scorecardRubricItems" :key="idx">
+                      <td class="fw-semibold">{{ item.criterion_name }}</td>
+                      <td class="text-center">{{ item.max_marks }}</td>
+                      <td class="text-center">{{ item.weightage ? item.weightage + '%' : '-' }}</td>
+                      <td class="text-center fw-bold text-success">
+                        {{ item.marks !== undefined ? item.marks : '-' }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div v-else class="p-3 border rounded text-muted small bg-white text-center">
+                Overall score assessed directly without granular criterion breakdown.
+              </div>
+            </div>
+
+            <!-- Written Remarks & Qualitative Feedback -->
+            <div class="card bg-light border-0">
+              <div class="card-body p-3">
+                <h6 class="fw-bold text-dark mb-1">Examiner Written Feedback &amp; Remarks:</h6>
+                <p class="mb-0 text-secondary fst-italic" v-if="selectedScorecardBooking?.evaluation?.remarks">
+                  &ldquo;{{ selectedScorecardBooking?.evaluation?.remarks }}&rdquo;
+                </p>
+                <p class="mb-0 text-muted small" v-else>
+                  No written feedback comments provided by the examiner.
+                </p>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer bg-light">
+            <button type="button" class="btn btn-secondary btn-sm" @click="showScorecardModal = false">
+              Close Scorecard
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -589,6 +708,51 @@ const selectedExamForSlots = ref(null);
 const availableSlotsList = ref([]);
 const loadingSlots = ref(false);
 const modalErrorMessage = ref("");
+
+// Scorecard Modal State (Milestone 6)
+const showScorecardModal = ref(false);
+const selectedScorecardBooking = ref(null);
+
+const scorecardRubricItems = computed(() => {
+  if (!selectedScorecardBooking.value) return [];
+  const evalRec = selectedScorecardBooking.value.evaluation;
+  if (!evalRec) return [];
+
+  // Check if rubric_breakdown is recorded as an array or dictionary
+  const rawBreakdown = evalRec.rubric_breakdown;
+  if (Array.isArray(rawBreakdown) && rawBreakdown.length > 0) {
+    return rawBreakdown;
+  }
+
+  // Fallback: match with exam rubrics if available
+  const examRubrics = selectedScorecardBooking.value.rubrics || [];
+  if (examRubrics.length > 0) {
+    return examRubrics.map((r) => ({
+      criterion_name: r.criterion_name,
+      max_marks: r.max_marks,
+      weightage: r.weightage,
+      marks:
+        rawBreakdown && typeof rawBreakdown === "object"
+          ? rawBreakdown[r.id]
+          : undefined,
+    }));
+  }
+
+  return [];
+});
+
+const rubricTotalMaxMarks = computed(() => {
+  if (scorecardRubricItems.value.length > 0) {
+    return scorecardRubricItems.value.reduce((acc, item) => acc + (item.max_marks || 0), 0);
+  }
+  const examRubrics = selectedScorecardBooking.value?.rubrics || [];
+  return examRubrics.reduce((acc, r) => acc + (r.max_marks || 0), 0);
+});
+
+function openScorecardModal(booking) {
+  selectedScorecardBooking.value = booking;
+  showScorecardModal.value = true;
+}
 
 // ---------------------------------------------------------------------------
 // API Data Fetchers

@@ -1055,22 +1055,75 @@ def global_search():
     return jsonify(results), 200
 
 
+@admin_bp.route("/history", methods=["GET"])
 @admin_bp.route("/records/history", methods=["GET"])
 @role_required("Admin")
 def get_records_history():
     """
-    GET /api/admin/records/history: Retrieve full historical records of examinations and bookings.
+    GET /api/admin/history
+    GET /api/admin/records/history
+    Admin can query and filter the global history of all examinations, bookings,
+    evaluations, and student records across all courses and examiners.
+    Supports query parameters: status, course_id, examination_id, examiner_id, student_id, query/search.
     """
+    query = Booking.query.join(ExaminationSlot).join(Examination)
+
+    status_filter = request.args.get("status")
+    if status_filter and status_filter.lower() != "all":
+        query = query.filter(Booking.status.ilike(status_filter.strip()))
+
+    course_id = request.args.get("course_id")
+    if course_id:
+        query = query.filter(Examination.course_id == int(course_id))
+
+    exam_id = request.args.get("examination_id")
+    if exam_id:
+        query = query.filter(Examination.id == int(exam_id))
+
+    examiner_id = request.args.get("examiner_id")
+    if examiner_id:
+        query = query.filter(ExaminationSlot.examiner_id == int(examiner_id))
+
+    student_id = request.args.get("student_id")
+    if student_id:
+        query = query.filter(Booking.student_id == int(student_id))
+
+    search_term = (request.args.get("query") or request.args.get("search") or "").strip()
+    if search_term:
+        pattern = f"%{search_term}%"
+        query = query.join(User, Booking.student_id == User.id).filter(
+            User.email.ilike(pattern)
+            | Examination.name.ilike(pattern)
+            | Booking.status.ilike(pattern)
+            | Booking.id.cast(db.String).ilike(pattern)
+        )
+
+    bookings = query.order_by(Booking.booking_date.desc()).all()
     exams = Examination.query.order_by(Examination.id.desc()).all()
-    bookings = Booking.query.order_by(Booking.booking_date.desc()).all()
+
+    formatted_bookings = [b.to_dict() for b in bookings]
+
+    total_b = len(formatted_bookings)
+    completed_b = sum(1 for b in formatted_bookings if b["status"] == "Completed")
+    cancelled_b = sum(1 for b in formatted_bookings if b["status"] == "Cancelled")
+    active_b = sum(1 for b in formatted_bookings if b["status"] == "Booked")
+    total_evals = sum(1 for b in formatted_bookings if b.get("has_evaluation"))
 
     return (
         jsonify(
             {
+                "summary": {
+                    "total_bookings": total_b,
+                    "completed_bookings": completed_b,
+                    "cancelled_bookings": cancelled_b,
+                    "active_bookings": active_b,
+                    "total_evaluations": total_evals,
+                    "total_examinations": len(exams),
+                },
                 "examinations": [e.to_dict(include_rubrics=True) for e in exams],
-                "bookings": [b.to_dict() for b in bookings],
+                "bookings": formatted_bookings,
                 "total_examinations": len(exams),
-                "total_bookings": len(bookings),
+                "total_bookings": total_b,
             }
         ),
         200,

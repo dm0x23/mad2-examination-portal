@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -385,6 +386,7 @@ class Evaluation(db.Model):
     )
     total_marks = db.Column(db.Float, nullable=False)
     remarks = db.Column(db.Text, nullable=True)
+    rubric_breakdown = db.Column(db.Text, nullable=True)
     evaluation_date = db.Column(db.DateTime, default=utc_now, nullable=False)
 
     booking = db.relationship("Booking", back_populates="evaluation")
@@ -400,15 +402,28 @@ class Evaluation(db.Model):
     )
 
     def to_dict(self) -> dict:
+        parsed_breakdown = None
+        if self.rubric_breakdown:
+            try:
+                parsed_breakdown = json.loads(self.rubric_breakdown)
+            except Exception:
+                parsed_breakdown = self.rubric_breakdown
+
         return {
             "id": self.id,
             "booking_id": self.booking_id,
             "examiner_id": self.examiner_id,
             "examiner_email": self.examiner.email if self.examiner else None,
+            "examiner_name": (
+                self.examiner.examiner_profile.name
+                if self.examiner and self.examiner.examiner_profile
+                else (self.examiner.email if self.examiner else None)
+            ),
             "student_id": self.student_id,
             "student_email": self.student.email if self.student else None,
             "total_marks": self.total_marks,
             "remarks": self.remarks,
+            "rubric_breakdown": parsed_breakdown,
             "evaluation_date": (
                 self.evaluation_date.isoformat() if self.evaluation_date else None
             ),
