@@ -393,9 +393,25 @@
 
       <!-- Complete Booking History -->
       <div class="card shadow-sm border-0">
-        <div class="card-header bg-white py-3">
-          <h5 class="mb-0 fw-bold text-dark">Complete Booking Activity Log</h5>
-          <small class="text-muted">History of all reservations, completions, and cancellations</small>
+        <div class="card-header bg-white py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+          <div>
+            <h5 class="mb-0 fw-bold text-dark">Complete Booking Activity Log</h5>
+            <small class="text-muted">History of all reservations, completions, and cancellations</small>
+          </div>
+          <button
+            class="btn btn-outline-success btn-sm d-flex align-items-center gap-1 shadow-sm"
+            :disabled="isExporting"
+            @click="handleExportHistory"
+          >
+            <span v-if="isExporting" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+            <span v-else>&#128196;</span>
+            <span>{{ isExporting ? 'Generating CSV...' : 'Export Exam History (CSV)' }}</span>
+          </button>
+        </div>
+
+        <div v-if="exportStatusMessage" class="alert alert-info py-2 px-3 m-3 mb-0 d-flex align-items-center shadow-sm">
+          <div v-if="isExporting" class="spinner-border spinner-border-sm text-info me-2" role="status"></div>
+          <span class="small fw-semibold">{{ exportStatusMessage }}</span>
         </div>
         <div class="table-responsive">
           <table class="table table-sm table-hover align-middle mb-0">
@@ -660,6 +676,8 @@ const loading = ref(false);
 const activeTab = ref("upcoming");
 const bookingSlotId = ref(null);
 const cancellingBookingId = ref(null);
+const isExporting = ref(false);
+const exportStatusMessage = ref("");
 
 // Alerts
 const alertMessage = ref({ type: "success", text: "" });
@@ -849,6 +867,70 @@ async function confirmCancelBooking(booking) {
     showAlert(err.response?.data?.message || "Failed to cancel booking.", "danger");
   } finally {
     cancellingBookingId.value = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Asynchronous CSV History Export (Milestone 7)
+// ---------------------------------------------------------------------------
+
+async function downloadBlob(url, filename) {
+  const response = await apiClient.get(url, { responseType: "blob" });
+  const blob = new Blob([response.data], { type: "text/csv;charset=utf-8;" });
+  const blobUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = blobUrl;
+  link.setAttribute("download", filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(blobUrl);
+}
+
+async function pollExportTaskStatus(taskId, maxAttempts = 30) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    try {
+      const res = await apiClient.get(`/api/student/export-status/${taskId}`);
+      const data = res.data;
+      if (data.status === "SUCCESS") {
+        exportStatusMessage.value = "Export ready! Downloading CSV file...";
+        if (data.download_url && data.filename) {
+          await downloadBlob(data.download_url, data.filename);
+        }
+        showAlert(`Exam history exported successfully! (${data.total_records || 0} records)`, "success");
+        return true;
+      } else if (data.status === "FAILURE") {
+        showAlert(data.error || "CSV export task failed on backend.", "danger");
+        return false;
+      } else {
+        exportStatusMessage.value = `Generating CSV report in background... (Attempt ${attempt}/${maxAttempts})`;
+      }
+    } catch (pollErr) {
+      console.warn("Poll attempt failed:", pollErr);
+    }
+  }
+  showAlert("CSV export is taking longer than expected. Please check back shortly.", "warning");
+  return false;
+}
+
+async function handleExportHistory() {
+  if (isExporting.value) return;
+  isExporting.value = true;
+  exportStatusMessage.value = "Initiating asynchronous export task...";
+  try {
+    const res = await apiClient.post("/api/student/export-history");
+    const taskId = res.data.task_id;
+    if (!taskId) {
+      throw new Error("No task ID returned from server.");
+    }
+    exportStatusMessage.value = "Task queued. Processing examination records...";
+    await pollExportTaskStatus(taskId);
+  } catch (err) {
+    showAlert(err.response?.data?.message || err.message || "Failed to trigger CSV export.", "danger");
+  } finally {
+    isExporting.value = false;
+    exportStatusMessage.value = "";
   }
 }
 

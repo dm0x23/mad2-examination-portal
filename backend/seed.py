@@ -39,7 +39,6 @@ def _create_tables_and_seed():
     else:
         print(f"[SEED] Admin user already exists ({existing_admin.email}). Skipping.")
 
-    # Seed initial demo student if not present
     demo_student = User.query.filter_by(email="student@portal.com").first()
     if not demo_student:
         demo_student = User(

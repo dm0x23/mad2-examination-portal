@@ -1,7 +1,9 @@
+import os
 from datetime import datetime, timezone
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, g, jsonify, request, send_from_directory, abort
 
 try:
+    from backend.config import Config
     from backend.database import db
     from backend.models import (
         User,
@@ -13,7 +15,10 @@ try:
         Evaluation,
     )
     from backend.utils.auth_middleware import role_required
+    from backend.tasks.jobs import export_student_history_csv
+    from backend.tasks.celery_app import get_celery_task_result
 except ImportError:
+    from config import Config
     from database import db
     from models import (
         User,
@@ -25,6 +30,8 @@ except ImportError:
         Evaluation,
     )
     from utils.auth_middleware import role_required
+    from tasks.jobs import export_student_history_csv
+    from tasks.celery_app import get_celery_task_result
 
 student_bp = Blueprint("student", __name__, url_prefix="/api/student")
 
@@ -523,10 +530,6 @@ def search_examinations():
     return jsonify({"query": search_text, "examinations": results, "total": len(results)}), 200
 
 
-# ---------------------------------------------------------------------------
-# 6. Student Examination Booking History & Results (Milestone 6)
-# ---------------------------------------------------------------------------
-
 
 @student_bp.route("/history", methods=["GET"])
 @role_required("Student")
@@ -563,5 +566,141 @@ def get_student_history():
             }
         ),
         200,
+    )
+
+
+@student_bp.route("/export-history", methods=["POST"])
+@role_required("Student")
+def trigger_export_history():
+    """
+    POST /api/student/export-history
+    Triggers an asynchronous Celery task to export student examination history to CSV.
+    Returns HTTP 202 Accepted with task_id.
+    """
+    student_id = g.current_user.id
+    try:
+        task = export_student_history_csv.delay(student_id)
+        return (
+            jsonify(
+                {
+                    "message": "Export initiated successfully",
+                    "task_id": task.id,
+                    "status": "PENDING",
+                }
+            ),
+            202,
+        )
+    except Exception as exc:
+        return (
+            jsonify(
+                {
+                    "error": "Export Initiation Failed",
+                    "message": str(exc),
+                }
+            ),
+            500,
+        )
+
+
+@student_bp.route("/export-status/<task_id>", methods=["GET"])
+@role_required("Student")
+def check_export_status(task_id: str):
+
+    try:
+        task_res = get_celery_task_result(task_id)
+        status = task_res.status
+
+        if status == "SUCCESS" or (hasattr(task_res, "ready") and task_res.ready() and hasattr(task_res, "successful") and task_res.successful()):
+            result = task_res.result if hasattr(task_res, "result") else task_res.info
+            filename = result.get("filename") if isinstance(result, dict) else None
+            download_url = result.get("download_url") if isinstance(result, dict) else None
+            total_records = result.get("total_records") if isinstance(result, dict) else 0
+
+            return (
+                jsonify(
+                    {
+                        "task_id": task_id,
+                        "status": "SUCCESS",
+                        "filename": filename,
+                        "download_url": download_url,
+                        "total_records": total_records,
+                        "result": result,
+                    }
+                ),
+                200,
+            )
+        elif status == "FAILURE" or (hasattr(task_res, "failed") and task_res.failed()):
+            err_info = str(task_res.result or (task_res.info if hasattr(task_res, "info") else "Export task failed"))
+            return (
+                jsonify(
+                    {
+                        "task_id": task_id,
+                        "status": "FAILURE",
+                        "error": err_info,
+                    }
+                ),
+                500,
+            )
+        else:
+            return (
+                jsonify(
+                    {
+                        "task_id": task_id,
+                        "status": "PENDING",
+                        "message": "Export task is still processing",
+                    }
+                ),
+                200,
+            )
+    except Exception as exc:
+        return (
+            jsonify(
+                {
+                    "task_id": task_id,
+                    "status": "FAILURE",
+                    "error": str(exc),
+                }
+            ),
+            500,
+        )
+
+
+@student_bp.route("/export-download/<filename>", methods=["GET"])
+@role_required("Student")
+def download_export_file(filename: str):
+
+    if ".." in filename or "/" in filename or "\\" in filename:
+        return jsonify({"error": "Forbidden", "message": "Invalid file request."}), 400
+
+    expected_prefix = f"export_{g.current_user.id}_"
+    if not filename.startswith(expected_prefix) or not filename.endswith(".csv"):
+        return (
+            jsonify(
+                {
+                    "error": "Forbidden",
+                    "message": "Access denied: you may only download your own export files.",
+                }
+            ),
+            403,
+        )
+
+    file_path = os.path.join(Config.EXPORTS_FOLDER, filename)
+    if not os.path.isfile(file_path):
+        return (
+            jsonify(
+                {
+                    "error": "Not Found",
+                    "message": "Export file not found or has expired.",
+                }
+            ),
+            404,
+        )
+
+    return send_from_directory(
+        Config.EXPORTS_FOLDER,
+        filename,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="text/csv",
     )
 

@@ -1,0 +1,5 @@
+Student ID,Examination Name,Course Code,Course Name,Examination Date,Start Time,Examiner Name,Marks Obtained,Booking Status
+7,CS101 Mid-Term Viva,CS101,Introduction to Programming,2026-11-23,14:00,Prof. John Smith,N/A,Booked
+7,CS101 Mid-Term Viva,CS101,Introduction to Programming,2026-11-22,10:00,Prof. John Smith,25.0,Completed
+7,CS101 Mid-Term Viva,CS101,Introduction to Programming,2026-11-28,10:00,Prof. John Smith,N/A,Cancelled
+7,CS101 Mid-Term Viva,CS101,Introduction to Programming,2026-11-22,10:00,Prof. John Smith,N/A,Cancelled

@@ -20,5 +20,15 @@ class Config:
     JWT_HEADER_NAME = "Authorization"
     JWT_HEADER_TYPE = "Bearer"
 
+    # Celery & Redis Configuration (Milestone 7)
+    CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
+    CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/1")
+    CELERY_TIMEZONE = os.environ.get("CELERY_TIMEZONE", "Asia/Kolkata")
+
+    # Static Exports & Reports
+    EXPORTS_FOLDER = os.path.join(BASE_DIR, "static", "exports")
+    REPORTS_FOLDER = os.path.join(BASE_DIR, "static", "reports")
+    LOGS_FOLDER = os.path.join(BASE_DIR, "logs")
+
 
 

@@ -271,6 +271,16 @@
           Historical Records
         </button>
       </li>
+      <li class="nav-item" role="presentation">
+        <button
+          :class="['nav-link', activeTab === 'reports' ? 'active' : '']"
+          type="button"
+          @click="loadReportsTab"
+        >
+          Monthly Reports
+          <span class="badge bg-secondary ms-1">{{ monthlyReports.length }}</span>
+        </button>
+      </li>
     </ul>
 
     <!-- Tab 1: Courses & Examinations -->
@@ -796,6 +806,71 @@
                       </button>
                     </div>
                     <span v-else class="text-muted small">&ndash;</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 5: Monthly Administrative Reports (Milestone 7) -->
+    <div v-show="activeTab === 'reports'">
+      <div class="card shadow-sm border-0 mb-4">
+        <div class="card-header bg-white py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+          <div>
+            <h5 class="mb-0 fw-bold text-dark">Monthly Administrative Reports</h5>
+            <small class="text-muted">
+              Scheduled HTML reports generated on the 1st of every month via Celery Beat, or generated on demand
+            </small>
+          </div>
+          <button
+            class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1 shadow-sm"
+            :disabled="generatingReport"
+            @click="handleGenerateReport"
+          >
+            <span v-if="generatingReport" class="spinner-border spinner-border-sm me-1" role="status"></span>
+            <span v-else>&#9881;</span>
+            <span>{{ generatingReport ? 'Generating Report...' : 'Generate Report Now' }}</span>
+          </button>
+        </div>
+
+        <div class="card-body p-0">
+          <div v-if="monthlyReports.length === 0" class="text-center py-5 text-muted">
+            No monthly reports generated yet. Click "Generate Report Now" or wait for the scheduled monthly Celery Beat job.
+          </div>
+          <div v-else class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Report Filename</th>
+                  <th>File Size</th>
+                  <th>Generated Date</th>
+                  <th class="text-end" style="width: 220px;">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="rep in monthlyReports" :key="rep.filename">
+                  <td>
+                    <div class="fw-bold text-dark d-flex align-items-center gap-2">
+                      <span class="badge bg-primary">HTML</span>
+                      <span>{{ rep.filename }}</span>
+                    </div>
+                  </td>
+                  <td class="text-muted small">
+                    {{ (rep.file_size / 1024).toFixed(1) }} KB
+                  </td>
+                  <td class="small text-muted">
+                    {{ formatDate(rep.created_at) }}
+                  </td>
+                  <td class="text-end">
+                    <button
+                      class="btn btn-sm btn-outline-success fw-semibold"
+                      @click="viewReportInNewTab(rep.filename)"
+                    >
+                      View Report &nearr;
+                    </button>
                   </td>
                 </tr>
               </tbody>
@@ -1418,6 +1493,8 @@ const examiners = ref([]);
 const slots = ref([]);
 const bookings = ref([]);
 const historyRecords = ref({ examinations: [], bookings: [] });
+const monthlyReports = ref([]);
+const generatingReport = ref(false);
 
 // Search State
 const searchQuery = ref("");
@@ -1611,6 +1688,7 @@ async function refreshAllData() {
       fetchExaminers(),
       fetchSlots(),
       fetchBookings(),
+      fetchMonthlyReports(),
     ]);
   } finally {
     loading.value = false;
@@ -1620,6 +1698,44 @@ async function refreshAllData() {
 function loadHistoryTab() {
   activeTab.value = "history";
   fetchHistoryRecords();
+}
+
+function loadReportsTab() {
+  activeTab.value = "reports";
+  fetchMonthlyReports();
+}
+
+async function fetchMonthlyReports() {
+  try {
+    const res = await apiClient.get("/api/admin/reports");
+    monthlyReports.value = res.data.reports || [];
+  } catch (err) {
+    showAlert(err.response?.data?.message || "Failed to fetch reports list.", "danger");
+  }
+}
+
+async function handleGenerateReport() {
+  generatingReport.value = true;
+  try {
+    const res = await apiClient.post("/api/admin/reports/generate", {});
+    showAlert(res.data.message || "Monthly report generated successfully!");
+    await fetchMonthlyReports();
+  } catch (err) {
+    showAlert(err.response?.data?.message || "Failed to generate report.", "danger");
+  } finally {
+    generatingReport.value = false;
+  }
+}
+
+async function viewReportInNewTab(filename) {
+  try {
+    const res = await apiClient.get(`/api/admin/reports/${filename}`, { responseType: "text" });
+    const blob = new Blob([res.data], { type: "text/html" });
+    const blobUrl = URL.createObjectURL(blob);
+    window.open(blobUrl, "_blank");
+  } catch (err) {
+    showAlert(err.response?.data?.message || "Failed to open report.", "danger");
+  }
 }
 
 // ---------------------------------------------------------------------------

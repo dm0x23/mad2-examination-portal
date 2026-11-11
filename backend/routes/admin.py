@@ -1,8 +1,10 @@
+import os
 from datetime import datetime, date, time
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_from_directory
 from werkzeug.security import generate_password_hash
 
 try:
+    from backend.config import Config
     from backend.database import db
     from backend.models import (
         User,
@@ -15,7 +17,9 @@ try:
         Evaluation,
     )
     from backend.utils.auth_middleware import role_required
+    from backend.tasks.jobs import generate_monthly_admin_report
 except ImportError:
+    from config import Config
     from database import db
     from models import (
         User,
@@ -28,6 +32,7 @@ except ImportError:
         Evaluation,
     )
     from utils.auth_middleware import role_required
+    from tasks.jobs import generate_monthly_admin_report
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 
@@ -74,11 +79,6 @@ def parse_time(t_val):
     return datetime.strptime(t_str[:8], "%H:%M:%S").time()
 
 
-# ---------------------------------------------------------------------------
-# 1. System Statistics & Metrics
-# ---------------------------------------------------------------------------
-
-
 @admin_bp.route("/stats", methods=["GET"])
 @role_required("Admin")
 def get_system_stats():
@@ -109,9 +109,6 @@ def get_system_stats():
     )
 
 
-# ---------------------------------------------------------------------------
-# 2. Course Management
-# ---------------------------------------------------------------------------
 
 
 @admin_bp.route("/courses", methods=["GET"])
@@ -1127,5 +1124,86 @@ def get_records_history():
             }
         ),
         200,
+    )
+
+
+
+
+@admin_bp.route("/reports", methods=["GET"])
+@role_required("Admin")
+def list_monthly_reports():
+
+    os.makedirs(Config.REPORTS_FOLDER, exist_ok=True)
+    report_files = []
+
+    try:
+        for fname in os.listdir(Config.REPORTS_FOLDER):
+            if fname.endswith(".html"):
+                full_path = os.path.join(Config.REPORTS_FOLDER, fname)
+                stat = os.stat(full_path)
+                report_files.append(
+                    {
+                        "filename": fname,
+                        "file_size": stat.st_size,
+                        "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        "view_url": f"/api/admin/reports/{fname}",
+                    }
+                )
+    except Exception as exc:
+        return jsonify({"error": "Failed to read reports directory", "message": str(exc)}), 500
+
+    report_files.sort(key=lambda x: x["created_at"], reverse=True)
+    return jsonify({"reports": report_files, "total": len(report_files)}), 200
+
+
+@admin_bp.route("/reports/generate", methods=["POST"])
+@role_required("Admin")
+def trigger_monthly_report():
+
+    data = request.get_json(silent=True) or {}
+    year = data.get("year")
+    month = data.get("month")
+
+    try:
+        result = generate_monthly_admin_report(year=year, month=month)
+        return (
+            jsonify(
+                {
+                    "message": "Monthly report generated successfully.",
+                    "report": result,
+                }
+            ),
+            201,
+        )
+    except Exception as exc:
+        return (
+            jsonify(
+                {
+                    "error": "Report Generation Failed",
+                    "message": str(exc),
+                }
+            ),
+            500,
+        )
+
+
+@admin_bp.route("/reports/<filename>", methods=["GET"])
+@role_required("Admin")
+def view_monthly_report(filename: str):
+
+    if ".." in filename or "/" in filename or "\\" in filename:
+        return jsonify({"error": "Forbidden", "message": "Invalid file request."}), 400
+
+    if not filename.endswith(".html"):
+        return jsonify({"error": "Bad Request", "message": "Only HTML report files can be viewed."}), 400
+
+    file_path = os.path.join(Config.REPORTS_FOLDER, filename)
+    if not os.path.isfile(file_path):
+        return jsonify({"error": "Not Found", "message": "Report file not found."}), 404
+
+    return send_from_directory(
+        Config.REPORTS_FOLDER,
+        filename,
+        mimetype="text/html",
     )
 
