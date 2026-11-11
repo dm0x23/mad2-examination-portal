@@ -1,6 +1,7 @@
 import os
+import time
 from datetime import datetime, timezone
-from flask import Blueprint, g, jsonify, request, send_from_directory, abort
+from flask import Blueprint, g, jsonify, request, send_from_directory, abort, make_response
 
 try:
     from backend.config import Config
@@ -17,6 +18,7 @@ try:
     from backend.utils.auth_middleware import role_required
     from backend.tasks.jobs import export_student_history_csv
     from backend.tasks.celery_app import get_celery_task_result
+    from backend.extensions import cache
 except ImportError:
     from config import Config
     from database import db
@@ -32,6 +34,7 @@ except ImportError:
     from utils.auth_middleware import role_required
     from tasks.jobs import export_student_history_csv
     from tasks.celery_app import get_celery_task_result
+    from extensions import cache
 
 student_bp = Blueprint("student", __name__, url_prefix="/api/student")
 
@@ -187,48 +190,68 @@ def get_student_dashboard():
 @role_required("Student")
 def list_available_examinations():
 
+    start_time = time.perf_counter()
     student_id = g.current_user.id
+
+    cached_catalog = cache.get("available_examinations_list")
+    cache_hit = False
+
+    if cached_catalog is not None and isinstance(cached_catalog, list):
+        cache_hit = True
+        base_exams = cached_catalog
+    else:
+        all_exams = (
+            Examination.query.filter(Examination.status != "Cancelled")
+            .order_by(Examination.id.desc())
+            .all()
+        )
+
+        base_exams = []
+        for ex in all_exams:
+            if is_booking_open(ex):
+                avail_slots = ExaminationSlot.query.filter(
+                    ExaminationSlot.examination_id == ex.id,
+                    ExaminationSlot.available_seats > 0,
+                    ExaminationSlot.status != "Cancelled",
+                ).count()
+
+                base_exams.append(
+                    {
+                        "id": ex.id,
+                        "name": ex.name,
+                        "type": ex.type,
+                        "course_id": ex.course_id,
+                        "course_code": ex.course.code if ex.course else None,
+                        "course_name": ex.course.name if ex.course else None,
+                        "slot_booking_start_date": ex.slot_booking_start_date.isoformat() if ex.slot_booking_start_date else None,
+                        "slot_booking_end_date": ex.slot_booking_end_date.isoformat() if ex.slot_booking_end_date else None,
+                        "status": ex.status,
+                        "is_booking_open": True,
+                        "available_slots_count": avail_slots,
+                        "rubrics": [r.to_dict() for r in ex.rubrics],
+                    }
+                )
+
+        cache.set("available_examinations_list", base_exams, timeout=getattr(Config, "CACHE_CATALOGUE_TIMEOUT", 120))
+
     active_booked_exam_ids = {
         b.slot.examination_id
         for b in Booking.query.filter_by(student_id=student_id, status="Booked").all()
         if b.slot
     }
 
-    all_exams = (
-        Examination.query.filter(Examination.status != "Cancelled")
-        .order_by(Examination.id.desc())
-        .all()
-    )
-
     results = []
-    for ex in all_exams:
-        open_status = is_booking_open(ex)
-        if open_status:
-            avail_slots = ExaminationSlot.query.filter(
-                ExaminationSlot.examination_id == ex.id,
-                ExaminationSlot.available_seats > 0,
-                ExaminationSlot.status != "Cancelled",
-            ).count()
+    for ex in base_exams:
+        item = dict(ex)
+        item["has_active_booking"] = ex["id"] in active_booked_exam_ids
+        results.append(item)
 
-            results.append(
-                {
-                    "id": ex.id,
-                    "name": ex.name,
-                    "type": ex.type,
-                    "course_id": ex.course_id,
-                    "course_code": ex.course.code if ex.course else None,
-                    "course_name": ex.course.name if ex.course else None,
-                    "slot_booking_start_date": ex.slot_booking_start_date.isoformat() if ex.slot_booking_start_date else None,
-                    "slot_booking_end_date": ex.slot_booking_end_date.isoformat() if ex.slot_booking_end_date else None,
-                    "status": ex.status,
-                    "is_booking_open": True,
-                    "available_slots_count": avail_slots,
-                    "has_active_booking": ex.id in active_booked_exam_ids,
-                    "rubrics": [r.to_dict() for r in ex.rubrics],
-                }
-            )
-
-    return jsonify({"examinations": results, "total": len(results)}), 200
+    duration_ms = (time.perf_counter() - start_time) * 1000
+    resp = make_response(jsonify({"examinations": results, "total": len(results)}), 200)
+    resp.headers["X-Cache"] = "HIT" if cache_hit else "MISS"
+    resp.headers["X-Response-Time"] = f"{duration_ms:.2f}ms"
+    resp.headers["X-Cache-Key"] = "available_examinations_list"
+    return resp
 
 
 @student_bp.route("/examinations/<int:exam_id>/slots", methods=["GET"])
@@ -370,6 +393,7 @@ def book_slot():
     )
     db.session.add(new_booking)
     db.session.commit()
+    cache.delete("available_examinations_list")
 
     return (
         jsonify(
@@ -454,6 +478,7 @@ def cancel_booking(booking_id):
             slot.status = "Available"
 
     db.session.commit()
+    cache.delete("available_examinations_list")
 
     return (
         jsonify(

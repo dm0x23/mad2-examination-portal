@@ -18,6 +18,7 @@ try:
     )
     from backend.utils.auth_middleware import role_required
     from backend.tasks.jobs import generate_monthly_admin_report
+    from backend.extensions import cache
 except ImportError:
     from config import Config
     from database import db
@@ -33,6 +34,7 @@ except ImportError:
     )
     from utils.auth_middleware import role_required
     from tasks.jobs import generate_monthly_admin_report
+    from extensions import cache
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 
@@ -159,6 +161,7 @@ def create_course():
     )
     db.session.add(course)
     db.session.commit()
+    cache.delete("available_examinations_list")
 
     return (
         jsonify(
@@ -217,6 +220,7 @@ def update_course(course_id):
         course.status = data.get("status", "Active").strip()
 
     db.session.commit()
+    cache.delete("available_examinations_list")
 
     return (
         jsonify(
@@ -257,6 +261,7 @@ def delete_course(course_id):
 
     db.session.delete(course)
     db.session.commit()
+    cache.delete("available_examinations_list")
 
     return (
         jsonify(
@@ -366,6 +371,7 @@ def create_examination():
     )
     db.session.add(examination)
     db.session.commit()
+    cache.delete("available_examinations_list")
 
     return (
         jsonify(
@@ -425,6 +431,8 @@ def update_examination(exam_id):
         return jsonify({"error": "Bad Request", "message": str(val_err)}), 400
 
     db.session.commit()
+    cache.delete("available_examinations_list")
+    cache.delete(f"rubrics_exam_{exam_id}")
 
     return (
         jsonify(
@@ -470,6 +478,8 @@ def delete_examination(exam_id):
 
     db.session.delete(exam)
     db.session.commit()
+    cache.delete("available_examinations_list")
+    cache.delete(f"rubrics_exam_{exam_id}")
 
     return (
         jsonify({"message": f"Examination '{exam.name}' removed successfully."}),
@@ -479,8 +489,9 @@ def delete_examination(exam_id):
 
 @admin_bp.route("/examinations/<int:exam_id>/rubrics", methods=["GET"])
 @role_required("Admin")
+@cache.cached("rubrics_exam_{exam_id}", timeout=300)
 def get_examination_rubrics(exam_id):
-    """GET /api/admin/examinations/<id>/rubrics: Fetch rubrics for an exam."""
+    """GET /api/admin/examinations/<id>/rubrics: Fetch rubrics for an exam (Cached 300s)."""
     exam = Examination.query.get(exam_id)
     if not exam:
         return (
@@ -494,10 +505,7 @@ def get_examination_rubrics(exam_id):
 @admin_bp.route("/examinations/<int:exam_id>/rubrics", methods=["POST"])
 @role_required("Admin")
 def add_examination_rubric(exam_id):
-    """
-    POST /api/admin/examinations/<id>/rubrics: Add evaluation rubrics
-    (criterion_name, max_marks, weightage).
-    """
+
     exam = Examination.query.get(exam_id)
     if not exam:
         return (
@@ -541,6 +549,9 @@ def add_examination_rubric(exam_id):
     db.session.add(rubric)
     db.session.commit()
 
+    cache.delete(f"rubrics_exam_{exam_id}")
+    cache.delete("available_examinations_list")
+
     return (
         jsonify(
             {
@@ -556,13 +567,20 @@ def add_examination_rubric(exam_id):
 @admin_bp.route("/examinations/<int:exam_id>/rubrics/<int:rubric_id>", methods=["DELETE"])
 @role_required("Admin")
 def delete_examination_rubric(rubric_id, exam_id=None):
-    """Delete an examination rubric."""
+    """Delete an examination rubric. Purges rubrics_exam_<id> and available_examinations_list."""
     rubric = ExaminationRubric.query.get(rubric_id)
     if not rubric:
         return jsonify({"error": "Not Found", "message": "Rubric not found."}), 404
 
+    target_exam_id = exam_id or rubric.examination_id
+
     db.session.delete(rubric)
     db.session.commit()
+
+    if target_exam_id:
+        cache.delete(f"rubrics_exam_{target_exam_id}")
+    cache.delete("available_examinations_list")
+
     return jsonify({"message": "Rubric deleted successfully."}), 200
 
 

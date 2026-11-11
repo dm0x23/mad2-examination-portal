@@ -14,6 +14,7 @@ try:
         Evaluation,
     )
     from backend.utils.auth_middleware import role_required
+    from backend.extensions import cache
 except ImportError:
     from database import db
     from models import (
@@ -26,6 +27,7 @@ except ImportError:
         Evaluation,
     )
     from utils.auth_middleware import role_required
+    from extensions import cache
 
 examiner_bp = Blueprint("examiner", __name__, url_prefix="/api/examiner")
 
@@ -307,6 +309,7 @@ def create_slot():
     )
     db.session.add(new_slot)
     db.session.commit()
+    cache.delete("available_examinations_list")
 
     return (
         jsonify(
@@ -319,9 +322,6 @@ def create_slot():
     )
 
 
-# ---------------------------------------------------------------------------
-# 4. Slot Modification & Deletion
-# ---------------------------------------------------------------------------
 
 
 @examiner_bp.route("/slots", methods=["GET"])
@@ -405,6 +405,7 @@ def update_slot(slot_id):
         )
 
     db.session.commit()
+    cache.delete("available_examinations_list")
 
     return (
         jsonify(
@@ -458,6 +459,7 @@ def delete_slot(slot_id):
 
     db.session.delete(slot)
     db.session.commit()
+    cache.delete("available_examinations_list")
 
     return (
         jsonify({"message": f"Slot #{slot_id} removed successfully."}),

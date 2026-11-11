@@ -30,5 +30,12 @@ class Config:
     REPORTS_FOLDER = os.path.join(BASE_DIR, "static", "reports")
     LOGS_FOLDER = os.path.join(BASE_DIR, "logs")
 
+    # Redis Caching Configuration (Milestone 8)
+    CACHE_TYPE = "RedisCache"
+    CACHE_REDIS_URL = os.environ.get("CACHE_REDIS_URL", "redis://localhost:6379/2")
+    CACHE_DEFAULT_TIMEOUT = 300
+    CACHE_RUBRICS_TIMEOUT = 300  # 5 minutes
+    CACHE_CATALOGUE_TIMEOUT = 120  # 2 minutes
+
 
 
